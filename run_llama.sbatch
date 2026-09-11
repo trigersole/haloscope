@@ -12,6 +12,7 @@
 set -euo pipefail
 
 STAGE="${1:-generate}"
+EXTRA_ARGS=("${@:2}")
 OFFICIAL_ROOT="${SLURM_SUBMIT_DIR:-$PWD}"
 CURRENT_ROOT="${HALOSCOPE_REIMPLEMENTATION_ROOT:-$OFFICIAL_ROOT/../LLM_Haloscope}"
 PYTHON="${HALOSCOPE_PYTHON:-$CURRENT_ROOT/.venv/bin/python}"
@@ -28,16 +29,18 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 mkdir -p logs save_for_eval models
 
-LLAMA_CACHE="$HF_HUB_CACHE/models--meta-llama--Llama-2-7b-chat-hf"
-LLAMA_PATH=$(find "$LLAMA_CACHE/snapshots" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-
-if [[ -z "$LLAMA_PATH" || ! -f "$LLAMA_PATH/config.json" ]]; then
-    echo "ERROR: Llama snapshot was not found under $LLAMA_CACHE"
-    exit 2
-fi
-if [[ ! -f "$OFFICIAL_ROOT/models/BLEURT-20/config.json" ]]; then
-    echo "ERROR: models/BLEURT-20 is missing or incorrect"
-    exit 2
+LLAMA_PATH=""
+if [[ "$STAGE" != "detect-plus" ]]; then
+    LLAMA_CACHE="$HF_HUB_CACHE/models--meta-llama--Llama-2-7b-chat-hf"
+    LLAMA_PATH=$(find "$LLAMA_CACHE/snapshots" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+    if [[ -z "$LLAMA_PATH" || ! -f "$LLAMA_PATH/config.json" ]]; then
+        echo "ERROR: Llama snapshot was not found under $LLAMA_CACHE"
+        exit 2
+    fi
+    if [[ ! -f "$OFFICIAL_ROOT/models/BLEURT-20/config.json" ]]; then
+        echo "ERROR: models/BLEURT-20 is missing or incorrect"
+        exit 2
+    fi
 fi
 if [[ ! -x "$PYTHON" ]]; then
     echo "ERROR: Python executable was not found: $PYTHON"
@@ -48,7 +51,7 @@ echo "Job ID: ${SLURM_JOB_ID:-unknown}"
 echo "Stage: $STAGE"
 echo "Node: $(hostname)"
 echo "Python: $PYTHON"
-echo "Llama: $LLAMA_PATH"
+echo "Llama: ${LLAMA_PATH:-saved-artifact-only}"
 nvidia-smi
 
 COMMON_ARGS=(
@@ -69,9 +72,14 @@ case "$STAGE" in
         srun "$PYTHON" hal_det_llama.py \
             "${COMMON_ARGS[@]}" --use_rouge 0 --weighted_svd 1 --feat_loc_svd 3
         ;;
+    detect-plus)
+        srun "$PYTHON" run_haloscope_plus.py \
+            --dataset_name tqa --model_name llama2_chat_7B --use_rouge 0 \
+            "${EXTRA_ARGS[@]}"
+        ;;
     *)
         echo "Unknown stage: $STAGE"
-        echo "Use: generate, label, or detect"
+        echo "Use: generate, label, detect, or detect-plus"
         exit 2
         ;;
 esac

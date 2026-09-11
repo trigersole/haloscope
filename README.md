@@ -1,5 +1,8 @@
 # HaloScope
 
+The opt-in confidence-aware research variant on this fork is documented in
+[HALOSCOPE_PLUS.md](HALOSCOPE_PLUS.md). The released command remains the default.
+
 
 This is the source code accompanying the NeurIPS'24 spotlight [***HaloScope: Harnessing Unlabeled LLM Generations for Hallucination Detection***](https://arxiv.org/abs/2409.17504) by Xuefeng Du, Chaowei Xiao, and Yixuan Li
 
