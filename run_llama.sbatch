@@ -63,14 +63,17 @@ COMMON_ARGS=(
 
 case "$STAGE" in
     generate)
-        srun "$PYTHON" hal_det_llama.py "${COMMON_ARGS[@]}" --num_gene 1 --gene 1
+        srun "$PYTHON" hal_det_llama.py "${COMMON_ARGS[@]}" \
+            --num_gene 1 --gene 1 "${EXTRA_ARGS[@]}"
         ;;
     label)
-        srun "$PYTHON" hal_det_llama.py "${COMMON_ARGS[@]}" --use_rouge 0 --generate_gt 1
+        srun "$PYTHON" hal_det_llama.py "${COMMON_ARGS[@]}" \
+            --use_rouge 0 --generate_gt 1 "${EXTRA_ARGS[@]}"
         ;;
     detect)
         srun "$PYTHON" hal_det_llama.py \
-            "${COMMON_ARGS[@]}" --use_rouge 0 --weighted_svd 1 --feat_loc_svd 3
+            "${COMMON_ARGS[@]}" --use_rouge 0 --weighted_svd 1 --feat_loc_svd 3 \
+            "${EXTRA_ARGS[@]}"
         ;;
     detect-plus)
         srun "$PYTHON" run_haloscope_plus.py \

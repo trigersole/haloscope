@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 import numpy as np
+from prompt_variants import PROMPT_PRESETS, prompt_artifact_tag
 
 
 def build_parser():
@@ -13,6 +14,7 @@ def build_parser():
     parser.add_argument('--wild_ratio', type=float, default=0.75)
     parser.add_argument('--thres_gt', type=float, default=0.5)
     parser.add_argument('--use_rouge', type=int, default=0)
+    parser.add_argument('--prompt_name', choices=sorted(PROMPT_PRESETS), default='concise')
     parser.add_argument(
         '--plus_run_name', type=str, default='default',
         help='safe name appended to checkpoint, detector, and results files',
@@ -57,11 +59,14 @@ def official_split(length, wild_ratio=0.75, seed=41):
 def main():
     args = build_parser().parse_args()
     root = Path('save_for_eval') / f'{args.dataset_name}_hal_det'
+    prompt_tag = prompt_artifact_tag(args.prompt_name)
     embedding_path = root / (
-        f'most_likely_{args.model_name}_gene_embeddings_layer_wise.npy'
+        f'most_likely_{args.model_name}_gene_embeddings_layer_wise{prompt_tag}.npy'
     )
     score_suffix = 'rouge' if args.use_rouge else 'bleurt'
-    score_path = Path(f'ml_{args.dataset_name}_{score_suffix}_score.npy')
+    score_path = Path(
+        f'ml_{args.dataset_name}_{score_suffix}_score{prompt_tag}.npy'
+    )
     if not embedding_path.is_file():
         raise FileNotFoundError(
             f'Official layer embeddings are missing: {embedding_path}. Run detect once first.'

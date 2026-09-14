@@ -3,6 +3,7 @@ import pytest
 
 from haloscope_plus import artifact_suffix, confidence_tail_labels, roc_auc, subspace_score
 from run_haloscope_plus import official_split
+from prompt_variants import format_qa_prompt, prompt_artifact_tag, tagged_path
 
 
 class FakePCA:
@@ -47,3 +48,12 @@ def test_artifact_suffix_keeps_ablation_runs_separate_and_safe():
     assert artifact_suffix('linear-official') == '_linear-official'
     with pytest.raises(ValueError):
         artifact_suffix('../outside')
+
+
+def test_prompt_presets_preserve_baseline_and_separate_alternatives():
+    assert format_qa_prompt('concise', 'Why?', 'Because.') == (
+        'Answer the question concisely. Q: Why? A:Because.'
+    )
+    assert prompt_artifact_tag('concise') == ''
+    assert prompt_artifact_tag('short-factual') == '_short-factual'
+    assert str(tagged_path('scores.npy', 'most-accurate')) == 'scores_most-accurate.npy'

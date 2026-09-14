@@ -97,3 +97,37 @@ The configurable options are visible with:
 ```bash
 python run_haloscope_plus.py --help
 ```
+
+## Prompt ablations
+
+Three named TruthfulQA prompt presets are available:
+
+- `concise`: `Answer the question concisely.` (released default)
+- `short-factual`: `Provide a short factual answer.`
+- `most-accurate`: `Give only the most accurate answer.`
+
+Each prompt has separate answer, BLEURT-score, embedding, threshold-search,
+HaloScope++ checkpoint, detector, and result filenames. The `concise` preset keeps
+the released filenames unchanged. Run every alternative through the complete
+pipeline, using exactly the same `--prompt_name` at every stage:
+
+```bash
+PROMPT_NAME=short-factual
+
+sbatch run_llama.sbatch generate --prompt_name "$PROMPT_NAME"
+# Wait for generation to finish.
+sbatch run_llama.sbatch label --prompt_name "$PROMPT_NAME"
+# Wait for labeling to finish.
+sbatch run_llama.sbatch detect --prompt_name "$PROMPT_NAME"
+# Wait for embedding extraction/detection to finish.
+sbatch run_llama.sbatch detect-plus \
+  --prompt_name "$PROMPT_NAME" \
+  --plus_run_name official-mlp128 \
+  --plus_score_mode official \
+  --plus_probe_backend mlp \
+  --plus_hidden_dim 128
+```
+
+Repeat with `PROMPT_NAME=most-accurate`. Generation resumes independently for each
+prompt. Do not submit a downstream stage until the preceding stage has completed;
+otherwise it will fail because that prompt's artifacts do not exist yet.

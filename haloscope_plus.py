@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
+from prompt_variants import prompt_artifact_tag
 
 
 @dataclass(frozen=True)
@@ -324,7 +325,7 @@ def run_haloscope_plus(
     config = _config_from_args(args, wild.shape[1])
     output_dir = Path('save_for_eval') / f'{args.dataset_name}_hal_det'
     output_dir.mkdir(parents=True, exist_ok=True)
-    suffix = artifact_suffix(args.plus_run_name)
+    suffix = prompt_artifact_tag(args.prompt_name) + artifact_suffix(args.plus_run_name)
     checkpoint = output_dir / f'haloscope_plus_search_{args.model_name}{suffix}.pt'
     detector_path = output_dir / f'haloscope_plus_detector_{args.model_name}{suffix}.pt'
     results_path = output_dir / f'haloscope_plus_results_{args.model_name}{suffix}.json'
@@ -430,6 +431,7 @@ def run_haloscope_plus(
 
     result = {
         'method': 'haloscope_plus',
+        'prompt_name': args.prompt_name,
         'run_name': args.plus_run_name,
         'config': signature,
         'subspace_layer': subspace_layer,

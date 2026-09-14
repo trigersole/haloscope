@@ -17,6 +17,7 @@ from baukit_nethook import Trace, TraceDict
 from metric_utils import get_measures, print_measures
 import re
 from torch.autograd import Variable
+from prompt_variants import PROMPT_PRESETS, format_qa_prompt, prompt_artifact_tag
 
 
 
@@ -59,9 +60,19 @@ def main():
     parser.add_argument('--wild_ratio', type=float, default=0.75)
     parser.add_argument('--thres_gt', type=float, default=0.5)
     parser.add_argument('--most_likely', type=int, default=0)
+    parser.add_argument('--prompt_name', choices=sorted(PROMPT_PRESETS), default='concise')
 
     parser.add_argument("--model_dir", type=str, default=None, help='local directory with model data')
     args = parser.parse_args()
+    prompt_tag = prompt_artifact_tag(args.prompt_name)
+
+    def answer_path(index, most_likely):
+        info = 'most_likely_' if most_likely else 'batch_generations_'
+        return (
+            f'./save_for_eval/{args.dataset_name}_hal_det/answers/'
+            f'{info}hal_det_{args.model_name}_{args.dataset_name}_answers'
+            f'{prompt_tag}_index_{index}.npy'
+        )
 
     MODEL = HF_NAMES[args.model_name] if not args.model_dir else args.model_dir
 
@@ -166,17 +177,9 @@ def main():
         os.makedirs(answers_dir, exist_ok=True)
 
         info = 'most_likely_' if args.most_likely else 'batch_generations_'
-        answer_prefix = (
-            info
-            + f'hal_det_{args.model_name}_{args.dataset_name}_answers_index_'
-        )
-
         begin_index = 0
         while begin_index < len(dataset):
-            saved_path = os.path.join(
-                answers_dir,
-                f'{answer_prefix}{begin_index}.npy',
-            )
+            saved_path = answer_path(begin_index, args.most_likely)
             if not os.path.isfile(saved_path):
                 break
 
@@ -218,7 +221,10 @@ def main():
                     dataset[i]['prompt'], return_tensors='pt').input_ids.cuda()
             else:
                 question = dataset[i]['question']
-                prompt = tokenizer(f"Answer the question concisely. Q: {question}" + " A:", return_tensors='pt').input_ids.cuda()
+                prompt = tokenizer(
+                    format_qa_prompt(args.prompt_name, question),
+                    return_tensors='pt',
+                ).input_ids.cuda()
             for gen_iter in range(args.num_gene):
                 if args.most_likely:
                     generated = model.generate(prompt,
@@ -241,11 +247,12 @@ def main():
                                            skip_special_tokens=True)
                 if args.dataset_name == 'tqa' or args.dataset_name == 'triviaqa':
                     # corner case.
-                    if 'Answer the question concisely' in decoded:
+                    prompt_instruction = PROMPT_PRESETS[args.prompt_name]
+                    if prompt_instruction in decoded:
                         print('#####error')
-                        print(decoded.split('Answer the question concisely')[1])
+                        print(decoded.split(prompt_instruction)[1])
                         print('#####error')
-                        decoded = decoded.split('Answer the question concisely')[0]
+                        decoded = decoded.split(prompt_instruction)[0]
                 if args.dataset_name == 'coqa':
                     if 'Q:' in decoded:
                         print('#####error')
@@ -262,8 +269,7 @@ def main():
             else:
                 info = 'batch_generations_'
             print("Saving answers")
-            np.save(f'./save_for_eval/{args.dataset_name}_hal_det/answers/' + info + f'hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy',
-                    answers)
+            np.save(answer_path(i, args.most_likely), answers)
     elif args.generate_gt:
         from bleurt_pytorch import BleurtConfig, BleurtForSequenceClassification, BleurtTokenizer
 
@@ -290,11 +296,9 @@ def main():
                 all_answers = dataset[int(used_indices[i])]['answers']['text']
 
             if args.most_likely:
-                answers = np.load(
-                    f'./save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy')
+                answers = np.load(answer_path(i, True))
             else:
-                answers = np.load(
-                    f'./save_for_eval/{args.dataset_name}_hal_det/answers/batch_generations_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy')
+                answers = np.load(answer_path(i, False))
             # get the gt.
             if args.use_rouge:
 
@@ -333,14 +337,14 @@ def main():
         # breakpoint()
         if args.most_likely:
             if args.use_rouge:
-                np.save(f'./ml_{args.dataset_name}_rouge_score.npy', gts)
+                np.save(f'./ml_{args.dataset_name}_rouge_score{prompt_tag}.npy', gts)
             else:
-                np.save(f'./ml_{args.dataset_name}_bleurt_score.npy', gts)
+                np.save(f'./ml_{args.dataset_name}_bleurt_score{prompt_tag}.npy', gts)
         else:
             if args.use_rouge:
-                np.save(f'./bg_{args.dataset_name}_rouge_score.npy', gts)
+                np.save(f'./bg_{args.dataset_name}_rouge_score{prompt_tag}.npy', gts)
             else:
-                np.save(f'./bg_{args.dataset_name}_bleurt_score.npy', gts)
+                np.save(f'./bg_{args.dataset_name}_bleurt_score{prompt_tag}.npy', gts)
 
     else:
         tokenizer = llama_iti.LlamaTokenizer.from_pretrained(MODEL, trust_remote_code=True)
@@ -359,8 +363,7 @@ def main():
                 question = dataset[int(used_indices[i])]['question']
             else:
                 question = dataset[i]['question']
-            answers = np.load(
-                f'save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy')
+            answers = np.load(answer_path(i, True))
 
             for anw in answers:
 
@@ -373,7 +376,7 @@ def main():
                     prompt = tokenizer(dataset[i]['prompt'] + anw, return_tensors='pt').input_ids.cuda()
                 else:
                     prompt = tokenizer(
-                        f"Answer the question concisely. Q: {question}" + " A:" + anw,
+                        format_qa_prompt(args.prompt_name, question, anw),
                         return_tensors='pt').input_ids.cuda()
                 with torch.no_grad():
                     hidden_states = model(prompt, output_hidden_states=True).hidden_states
@@ -381,7 +384,11 @@ def main():
                     hidden_states = hidden_states.detach().cpu().numpy()[:, -1, :]
                     embed_generated.append(hidden_states)
         embed_generated = np.asarray(np.stack(embed_generated), dtype=np.float32)
-        np.save(f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_layer_wise.npy', embed_generated)
+        np.save(
+            f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}'
+            f'_gene_embeddings_layer_wise{prompt_tag}.npy',
+            embed_generated,
+        )
 
         HEADS = [f"model.layers.{i}.self_attn.head_out" for i in range(model.config.num_hidden_layers)]
         MLPS = [f"model.layers.{i}.mlp" for i in range(model.config.num_hidden_layers)]
@@ -394,8 +401,7 @@ def main():
                 question = dataset[i]['question']
 
 
-            answers = np.load(
-                f'save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy')
+            answers = np.load(answer_path(i, True))
             for anw in answers:
                 if args.dataset_name == 'tydiqa':
                     prompt = tokenizer(
@@ -406,7 +412,7 @@ def main():
                     prompt = tokenizer(dataset[i]['prompt'] + anw, return_tensors='pt').input_ids.cuda()
                 else:
                     prompt = tokenizer(
-                        f"Answer the question concisely. Q: {question}" + " A:" + anw,
+                        format_qa_prompt(args.prompt_name, question, anw),
                         return_tensors='pt').input_ids.cuda()
 
                 with torch.no_grad():
@@ -422,16 +428,20 @@ def main():
         embed_generated_loc2 = np.asarray(np.stack(embed_generated_loc2), dtype=np.float32)
         embed_generated_loc1 = np.asarray(np.stack(embed_generated_loc1), dtype=np.float32)
 
-        np.save(f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_head_wise.npy', embed_generated_loc1)
-        np.save(f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_embeddings_mlp_wise.npy',  embed_generated_loc2)
+        np.save(
+            f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}'
+            f'_gene_embeddings_head_wise{prompt_tag}.npy', embed_generated_loc1)
+        np.save(
+            f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}'
+            f'_embeddings_mlp_wise{prompt_tag}.npy', embed_generated_loc2)
 
 
 
         # get the split and label (true or false) of the unlabeled data and the test data.
         if args.use_rouge:
-            gts = np.load(f'./ml_{args.dataset_name}_rouge_score.npy')
+            gts = np.load(f'./ml_{args.dataset_name}_rouge_score{prompt_tag}.npy')
         else:
-            gts = np.load(f'./ml_{args.dataset_name}_bleurt_score.npy')
+            gts = np.load(f'./ml_{args.dataset_name}_bleurt_score{prompt_tag}.npy')
         thres = args.thres_gt
         gt_label = np.asarray(gts> thres, dtype=np.int32)
 
@@ -554,15 +564,15 @@ def main():
 
         if args.most_likely:
             if feat_loc == 3:
-                embed_generated = np.load(f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_layer_wise.npy',
+                embed_generated = np.load(f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_layer_wise{prompt_tag}.npy',
                                   allow_pickle=True)
             elif feat_loc == 2:
                 embed_generated = np.load(
-                    f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_mlp_wise.npy',
+                    f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_mlp_wise{prompt_tag}.npy',
                     allow_pickle=True)
             else:
                 embed_generated = np.load(
-                    f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_head_wise.npy',
+                    f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_head_wise{prompt_tag}.npy',
                     allow_pickle=True)
             feat_indices_wild = []
             feat_indices_eval = []
@@ -636,7 +646,7 @@ def main():
 
         search_checkpoint = (
             f'./save_for_eval/{args.dataset_name}_hal_det/'
-            f'threshold_search_{args.model_name}.pt'
+            f'threshold_search_{args.model_name}{prompt_tag}.pt'
         )
 
         if os.path.isfile(search_checkpoint):
