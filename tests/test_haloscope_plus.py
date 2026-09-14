@@ -1,5 +1,7 @@
 import numpy as np
-from haloscope_plus import confidence_tail_labels, roc_auc, subspace_score
+import pytest
+
+from haloscope_plus import artifact_suffix, confidence_tail_labels, roc_auc, subspace_score
 from run_haloscope_plus import official_split
 
 
@@ -38,3 +40,10 @@ def test_official_truthfulqa_split_sizes_and_order():
     assert np.all(np.diff(validation) > 0)
     assert np.all(np.diff(test) > 0)
     assert len(set(wild) | set(validation) | set(test)) == 817
+
+
+def test_artifact_suffix_keeps_ablation_runs_separate_and_safe():
+    assert artifact_suffix('default') == ''
+    assert artifact_suffix('linear-official') == '_linear-official'
+    with pytest.raises(ValueError):
+        artifact_suffix('../outside')

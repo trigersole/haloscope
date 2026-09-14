@@ -55,6 +55,43 @@ and probe stages:
 sbatch run_llama.sbatch detect-plus --plus_score_mode official
 ```
 
+## Controlled probe ablations
+
+Give every experiment a unique `--plus_run_name`. Its search checkpoint, detector,
+and JSON result then coexist with all other runs and remain independently resumable.
+
+The following commands hold the official projection score and all training settings
+fixed while changing only probe capacity:
+
+```bash
+# Standardized logistic regression (one linear layer).
+sbatch run_llama.sbatch detect-plus \
+  --plus_run_name official-linear \
+  --plus_score_mode official \
+  --plus_probe_backend linear
+
+# Current small MLP.
+sbatch run_llama.sbatch detect-plus \
+  --plus_run_name official-mlp128 \
+  --plus_score_mode official \
+  --plus_probe_backend mlp \
+  --plus_hidden_dim 128
+
+# Capacity ablation matching the released probe's 1024 hidden units. This deliberately
+# retains HaloScope++ standardization, weighting, AdamW, and repeated-seed ensemble so
+# that hidden width is the only change; it is not a duplicate of the baseline detector.
+sbatch run_llama.sbatch detect-plus \
+  --plus_run_name official-mlp1024 \
+  --plus_score_mode official \
+  --plus_probe_backend mlp \
+  --plus_hidden_dim 1024
+```
+
+The direct-projection metrics are printed and stored in every result JSON. Run the
+released baseline separately with `sbatch run_llama.sbatch detect`; do not describe
+the 1024-unit capacity ablation above as the released baseline because its remaining
+training procedure intentionally stays identical to HaloScope++.
+
 The configurable options are visible with:
 
 ```bash

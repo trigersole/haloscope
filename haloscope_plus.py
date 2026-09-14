@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -17,6 +18,7 @@ import numpy as np
 @dataclass(frozen=True)
 class PlusConfig:
     score_mode: str
+    probe_backend: str
     tail_fractions: tuple[float, ...]
     layers: tuple[int, ...]
     probe_layers: tuple[int, ...]
@@ -37,6 +39,17 @@ def parse_number_list(value, cast=float):
     if not values:
         raise ValueError('expected a non-empty comma-separated list')
     return values
+
+
+def artifact_suffix(run_name):
+    """Return a safe optional suffix for independent resumable experiments."""
+    if run_name in (None, '', 'default'):
+        return ''
+    if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', run_name) is None:
+        raise ValueError(
+            'plus_run_name must contain only letters, numbers, dot, underscore, or dash'
+        )
+    return f'_{run_name}'
 
 
 def roc_auc(labels, scores):
@@ -115,7 +128,7 @@ def confidence_tail_labels(scores, fraction):
     return selected, labels, weights, lower, upper
 
 
-def _build_probe(torch, input_dim, hidden_dim, dropout, mean, scale):
+def _build_probe(torch, input_dim, backend, hidden_dim, dropout, mean, scale):
     class SmallProbe(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -125,12 +138,15 @@ def _build_probe(torch, input_dim, hidden_dim, dropout, mean, scale):
             self.register_buffer(
                 'feature_scale', torch.as_tensor(scale, dtype=torch.float32)
             )
-            self.network = torch.nn.Sequential(
-                torch.nn.Linear(input_dim, hidden_dim),
-                torch.nn.ReLU(),
-                torch.nn.Dropout(dropout),
-                torch.nn.Linear(hidden_dim, 1),
-            )
+            if backend == 'linear':
+                self.network = torch.nn.Linear(input_dim, 1)
+            else:
+                self.network = torch.nn.Sequential(
+                    torch.nn.Linear(input_dim, hidden_dim),
+                    torch.nn.ReLU(),
+                    torch.nn.Dropout(dropout),
+                    torch.nn.Linear(hidden_dim, 1),
+                )
 
         def forward(self, features):
             standardized = (features - self.feature_mean) / self.feature_scale
@@ -151,7 +167,13 @@ def train_probe(features, labels, weights, config, seed):
     scale = features.std(axis=0)
     scale[scale < 1e-6] = 1.0
     model = _build_probe(
-        torch, features.shape[1], config.hidden_dim, config.dropout, mean, scale
+        torch,
+        features.shape[1],
+        config.probe_backend,
+        config.hidden_dim,
+        config.dropout,
+        mean,
+        scale,
     ).cuda()
     counts = np.bincount(labels.astype(np.int64), minlength=2).astype(np.float32)
     class_weights = len(labels) / (2.0 * counts)
@@ -251,6 +273,7 @@ def _config_from_args(args, layer_count):
         raise ValueError('configured HaloScope++ layers are outside the model layer range')
     config = PlusConfig(
         score_mode=args.plus_score_mode,
+        probe_backend=args.plus_probe_backend,
         tail_fractions=parse_number_list(args.plus_tail_fractions, float),
         layers=layers,
         probe_layers=probe_layers,
@@ -266,14 +289,17 @@ def _config_from_args(args, layer_count):
     )
     if not 0.0 <= config.dropout < 1.0:
         raise ValueError('plus_dropout must be in [0, 1)')
+    if config.probe_backend not in {'linear', 'mlp'}:
+        raise ValueError('plus_probe_backend must be linear or mlp')
     if min(
-        config.hidden_dim,
         config.epochs,
         config.batch_size,
         config.probe_repeats,
         config.validation_folds,
     ) < 1:
         raise ValueError('probe sizes, repeats, epochs, and folds must be positive')
+    if config.probe_backend == 'mlp' and config.hidden_dim < 1:
+        raise ValueError('plus_hidden_dim must be positive for the MLP probe')
     if config.learning_rate <= 0 or config.weight_decay < 0:
         raise ValueError('learning rate must be positive and weight decay non-negative')
     if config.stability_penalty < 0:
@@ -298,9 +324,10 @@ def run_haloscope_plus(
     config = _config_from_args(args, wild.shape[1])
     output_dir = Path('save_for_eval') / f'{args.dataset_name}_hal_det'
     output_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint = output_dir / f'haloscope_plus_search_{args.model_name}.pt'
-    detector_path = output_dir / f'haloscope_plus_detector_{args.model_name}.pt'
-    results_path = output_dir / f'haloscope_plus_results_{args.model_name}.json'
+    suffix = artifact_suffix(args.plus_run_name)
+    checkpoint = output_dir / f'haloscope_plus_search_{args.model_name}{suffix}.pt'
+    detector_path = output_dir / f'haloscope_plus_detector_{args.model_name}{suffix}.pt'
+    results_path = output_dir / f'haloscope_plus_results_{args.model_name}{suffix}.json'
 
     best_subspace, pca = _select_subspace(wild, validation, validation_labels, config)
     _, validation_direct_auc, direct_fold_std, subspace_layer, k, sign = best_subspace
@@ -403,6 +430,7 @@ def run_haloscope_plus(
 
     result = {
         'method': 'haloscope_plus',
+        'run_name': args.plus_run_name,
         'config': signature,
         'subspace_layer': subspace_layer,
         'probe_layer': probe_layer,

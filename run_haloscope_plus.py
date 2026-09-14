@@ -13,7 +13,12 @@ def build_parser():
     parser.add_argument('--wild_ratio', type=float, default=0.75)
     parser.add_argument('--thres_gt', type=float, default=0.5)
     parser.add_argument('--use_rouge', type=int, default=0)
+    parser.add_argument(
+        '--plus_run_name', type=str, default='default',
+        help='safe name appended to checkpoint, detector, and results files',
+    )
     parser.add_argument('--plus_score_mode', choices=['official', 'equation7'], default='equation7')
+    parser.add_argument('--plus_probe_backend', choices=['linear', 'mlp'], default='mlp')
     parser.add_argument('--plus_tail_fractions', type=str, default='0.15,0.20,0.25,0.30,0.40')
     parser.add_argument('--plus_layers', type=str, default='4,5,6,7,8,9,10,11,12,13,14,15,16')
     parser.add_argument('--plus_probe_layers', type=str, default='4,5,6,7,8,9,10,11,12,13,14,15,16')
