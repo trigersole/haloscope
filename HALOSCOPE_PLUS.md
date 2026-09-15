@@ -92,6 +92,39 @@ released baseline separately with `sbatch run_llama.sbatch detect`; do not descr
 the 1024-unit capacity ablation above as the released baseline because its remaining
 training procedure intentionally stays identical to HaloScope++.
 
+## Improved probe on a frozen official run
+
+Use `probe-plus` to isolate probe training from all other HaloScope++ changes. It
+reuses the saved official answers, BLEURT labels, block embeddings, split, released
+projection score, hard pseudo-label threshold, and all 512 wild examples. Defaults
+are the configuration printed by the completed official TruthfulQA run: subspace
+layer 11, `k=10`, threshold quantile `0.07692307692307693`, and probe layer 6.
+
+```bash
+sbatch run_llama.sbatch probe-plus \
+  --plus_run_name fixed-official-mlp128 \
+  --plus_score_mode official \
+  --plus_probe_backend mlp \
+  --plus_hidden_dim 128
+```
+
+This stage does not load Llama or regenerate embeddings. It changes only probe
+training: feature standardization, class balancing, a 128-unit dropout MLP, AdamW,
+and a three-seed ensemble. Results are saved to:
+
+```text
+save_for_eval/tqa_hal_det/official_probe_plus_results_llama2_chat_7B_fixed-official-mlp128.json
+```
+
+If a different official run selects different values, pass them explicitly:
+
+```bash
+--official_subspace_layer 11 \
+--official_components 10 \
+--official_threshold_quantile 0.07692307692307693 \
+--official_probe_layer 6
+```
+
 The configurable options are visible with:
 
 ```bash

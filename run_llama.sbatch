@@ -30,7 +30,7 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 mkdir -p logs save_for_eval models
 
 LLAMA_PATH=""
-if [[ "$STAGE" != "detect-plus" ]]; then
+if [[ "$STAGE" != "detect-plus" && "$STAGE" != "probe-plus" ]]; then
     LLAMA_CACHE="$HF_HUB_CACHE/models--meta-llama--Llama-2-7b-chat-hf"
     LLAMA_PATH=$(find "$LLAMA_CACHE/snapshots" -mindepth 1 -maxdepth 1 -type d | head -n 1)
     if [[ -z "$LLAMA_PATH" || ! -f "$LLAMA_PATH/config.json" ]]; then
@@ -80,9 +80,15 @@ case "$STAGE" in
             --dataset_name tqa --model_name llama2_chat_7B --use_rouge 0 \
             "${EXTRA_ARGS[@]}"
         ;;
+    probe-plus)
+        srun "$PYTHON" run_haloscope_plus.py \
+            --dataset_name tqa --model_name llama2_chat_7B --use_rouge 0 \
+            --plus_protocol official-fixed --plus_score_mode official \
+            "${EXTRA_ARGS[@]}"
+        ;;
     *)
         echo "Unknown stage: $STAGE"
-        echo "Use: generate, label, detect, or detect-plus"
+        echo "Use: generate, label, detect, detect-plus, or probe-plus"
         exit 2
         ;;
 esac

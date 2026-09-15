@@ -33,6 +33,17 @@ def build_parser():
     parser.add_argument('--plus_probe_repeats', type=int, default=3)
     parser.add_argument('--plus_validation_folds', type=int, default=5)
     parser.add_argument('--plus_stability_penalty', type=float, default=0.25)
+    parser.add_argument(
+        '--plus_protocol', choices=['tails', 'official-fixed'], default='tails'
+    )
+    parser.add_argument('--official_subspace_layer', type=int, default=11)
+    parser.add_argument('--official_components', type=int, default=10)
+    parser.add_argument(
+        '--official_threshold_quantile',
+        type=float,
+        default=0.07692307692307693,
+    )
+    parser.add_argument('--official_probe_layer', type=int, default=6)
     return parser
 
 
@@ -96,9 +107,14 @@ def main():
         f'Using official artifacts: wild={len(wild_indices)}, '
         f'validation={len(validation_indices)}, test={len(test_indices)}'
     )
-    from haloscope_plus import run_haloscope_plus
+    from haloscope_plus import run_haloscope_plus, run_official_fixed_probe
 
-    run_haloscope_plus(
+    runner = (
+        run_official_fixed_probe
+        if args.plus_protocol == 'official-fixed'
+        else run_haloscope_plus
+    )
+    runner(
         embeddings[wild_indices],
         embeddings[validation_indices],
         embeddings[test_indices],

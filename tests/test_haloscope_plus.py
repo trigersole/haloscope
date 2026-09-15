@@ -1,7 +1,13 @@
 import numpy as np
 import pytest
 
-from haloscope_plus import artifact_suffix, confidence_tail_labels, roc_auc, subspace_score
+from haloscope_plus import (
+    artifact_suffix,
+    confidence_tail_labels,
+    hard_threshold_labels,
+    roc_auc,
+    subspace_score,
+)
 from run_haloscope_plus import official_split
 from prompt_variants import format_qa_prompt, prompt_artifact_tag, tagged_path
 
@@ -57,3 +63,12 @@ def test_prompt_presets_preserve_baseline_and_separate_alternatives():
     assert prompt_artifact_tag('concise') == ''
     assert prompt_artifact_tag('short-factual') == '_short-factual'
     assert str(tagged_path('scores.npy', 'most-accurate')) == 'scores_most-accurate.npy'
+
+
+def test_official_hard_threshold_uses_all_examples():
+    labels, weights, threshold = hard_threshold_labels(
+        np.arange(10, dtype=np.float64), 0.2
+    )
+    assert threshold == 2.0
+    np.testing.assert_array_equal(labels, [0, 0, 0, 1, 1, 1, 1, 1, 1, 1])
+    np.testing.assert_array_equal(weights, np.ones(10, dtype=np.float32))

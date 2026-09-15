@@ -129,6 +129,17 @@ def confidence_tail_labels(scores, fraction):
     return selected, labels, weights, lower, upper
 
 
+def hard_threshold_labels(scores, quantile):
+    """Reproduce the released sorted-index pseudo-label threshold."""
+    if not 0.0 < quantile < 1.0:
+        raise ValueError('threshold quantile must be in (0, 1)')
+    scores = np.asarray(scores, dtype=np.float64)
+    threshold = float(np.sort(scores)[int(len(scores) * quantile)])
+    labels = (scores > threshold).astype(np.int64)
+    weights = np.ones(len(scores), dtype=np.float32)
+    return labels, weights, threshold
+
+
 def _build_probe(torch, input_dim, backend, hidden_dim, dropout, mean, scale):
     class SmallProbe(torch.nn.Module):
         def __init__(self):
@@ -323,6 +334,8 @@ def run_haloscope_plus(
     from metric_utils import get_measures, print_measures
 
     config = _config_from_args(args, wild.shape[1])
+    if config.score_mode != 'official':
+        raise ValueError('official-fixed protocol requires plus_score_mode=official')
     output_dir = Path('save_for_eval') / f'{args.dataset_name}_hal_det'
     output_dir.mkdir(parents=True, exist_ok=True)
     suffix = prompt_artifact_tag(args.prompt_name) + artifact_suffix(args.plus_run_name)
@@ -461,4 +474,142 @@ def run_haloscope_plus(
     )
     print(f'HaloScope++ results saved to {results_path}')
     print(f'HaloScope++ detector saved to {detector_path}')
+    return result
+
+
+def run_official_fixed_probe(
+    wild,
+    validation,
+    test,
+    validation_labels,
+    test_labels,
+    args,
+):
+    """Train an improved probe on the frozen configuration selected by `detect`."""
+    import torch
+    from sklearn.decomposition import PCA
+    from metric_utils import get_measures, print_measures
+
+    config = _config_from_args(args, wild.shape[1])
+    subspace_layer = args.official_subspace_layer
+    probe_layer = args.official_probe_layer
+    k = args.official_components
+    for name, layer in (
+        ('official_subspace_layer', subspace_layer),
+        ('official_probe_layer', probe_layer),
+    ):
+        if not 0 <= layer < wild.shape[1]:
+            raise ValueError(f'{name} is outside the model layer range')
+    if not 1 <= k <= min(len(wild), wild.shape[2]):
+        raise ValueError('official_components is outside the valid PCA range')
+
+    # The released selection routine fits PCA on validation to orient the score.
+    # The chosen layer/k are passed from that completed official run. It then
+    # refits PCA on wild examples before pseudo-labeling and test scoring.
+    selection_pca = PCA(n_components=k, whiten=False).fit(
+        validation[:, subspace_layer, :]
+    )
+    raw_validation_score = subspace_score(
+        validation[:, subspace_layer, :], selection_pca, k, 'official'
+    )
+    positive_auc = roc_auc(validation_labels, raw_validation_score)
+    negative_auc = roc_auc(validation_labels, -raw_validation_score)
+    sign = 1 if positive_auc >= negative_auc else -1
+    validation_direct_auc = max(positive_auc, negative_auc)
+
+    pca = PCA(n_components=k, whiten=False).fit(wild[:, subspace_layer, :])
+    wild_score = sign * subspace_score(
+        wild[:, subspace_layer, :], pca, k, 'official'
+    )
+    test_score = sign * subspace_score(
+        test[:, subspace_layer, :], pca, k, 'official'
+    )
+    direct_measures = get_measures(
+        test_score[test_labels == 1], test_score[test_labels == 0], plot=False
+    )
+    print_measures(
+        direct_measures[0], direct_measures[1], direct_measures[2],
+        'official-fixed-direct-projection',
+    )
+
+    pseudo_labels, weights, threshold = hard_threshold_labels(
+        wild_score, args.official_threshold_quantile
+    )
+    models = [
+        train_probe(
+            wild[:, probe_layer, :],
+            pseudo_labels,
+            weights,
+            config,
+            config.seed + repeat,
+        )
+        for repeat in range(config.probe_repeats)
+    ]
+    validation_probabilities = ensemble_probabilities(
+        models, validation[:, probe_layer, :]
+    )
+    selection_score, validation_auc, fold_std = fold_stable_score(
+        validation_labels,
+        validation_probabilities,
+        config.validation_folds,
+        config.stability_penalty,
+        config.seed,
+    )
+    test_probabilities = ensemble_probabilities(models, test[:, probe_layer, :])
+    measures = get_measures(
+        test_probabilities[test_labels == 1],
+        test_probabilities[test_labels == 0],
+        plot=False,
+    )
+    print_measures(measures[0], measures[1], measures[2], 'official-fixed-probe-plus')
+    print('test AUROC: ', measures[0])
+
+    output_dir = Path('save_for_eval') / f'{args.dataset_name}_hal_det'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suffix = prompt_artifact_tag(args.prompt_name) + artifact_suffix(args.plus_run_name)
+    results_path = output_dir / (
+        f'official_probe_plus_results_{args.model_name}{suffix}.json'
+    )
+    detector_path = output_dir / (
+        f'official_probe_plus_detector_{args.model_name}{suffix}.pt'
+    )
+    signature = asdict(config)
+    result = {
+        'method': 'official_fixed_probe_plus',
+        'prompt_name': args.prompt_name,
+        'run_name': args.plus_run_name,
+        'config': signature,
+        'subspace_layer': subspace_layer,
+        'probe_layer': probe_layer,
+        'n_components': k,
+        'truth_score_sign': sign,
+        'threshold_quantile': args.official_threshold_quantile,
+        'threshold_value': threshold,
+        'pseudo_truthful': int(pseudo_labels.sum()),
+        'pseudo_hallucinated': int((1 - pseudo_labels).sum()),
+        'validation_direct_auroc': validation_direct_auc,
+        'selection_score': selection_score,
+        'validation_auroc': validation_auc,
+        'fold_std': fold_std,
+        'test_auroc': float(measures[0]),
+        'test_aupr': float(measures[1]),
+        'test_fpr95': float(measures[2]),
+        'direct_test_auroc': float(direct_measures[0]),
+        'direct_test_aupr': float(direct_measures[1]),
+        'direct_test_fpr95': float(direct_measures[2]),
+    }
+    results_path.write_text(json.dumps(result, indent=2), encoding='utf-8')
+    _atomic_torch_save(
+        {
+            'config': signature,
+            'result': result,
+            'pca_mean': pca.mean_,
+            'pca_components': pca.components_[:k],
+            'pca_singular_values': pca.singular_values_[:k],
+            'probe_state_dicts': [model.state_dict() for model in models],
+        },
+        detector_path,
+    )
+    print(f'Official-fixed probe results saved to {results_path}')
+    print(f'Official-fixed probe detector saved to {detector_path}')
     return result
