@@ -10,6 +10,7 @@ from haloscope_plus import (
 )
 from run_haloscope_plus import official_split
 from prompt_variants import format_qa_prompt, prompt_artifact_tag, tagged_path
+from plot_eigenvectors import split_indices
 
 
 class FakePCA:
@@ -72,3 +73,10 @@ def test_official_hard_threshold_uses_all_examples():
     assert threshold == 2.0
     np.testing.assert_array_equal(labels, [0, 0, 0, 1, 1, 1, 1, 1, 1, 1])
     np.testing.assert_array_equal(weights, np.ones(10, dtype=np.float32))
+
+
+def test_eigenvector_plot_uses_official_split():
+    plotted, wild = split_indices(817, 'test', wild_ratio=0.75, seed=41)
+    assert len(wild) == 512
+    assert len(plotted) == 205
+    assert len(set(plotted) & set(wild)) == 0

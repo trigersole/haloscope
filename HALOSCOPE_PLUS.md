@@ -164,3 +164,28 @@ sbatch run_llama.sbatch detect-plus \
 Repeat with `PROMPT_NAME=most-accurate`. Generation resumes independently for each
 prompt. Do not submit a downstream stage until the preceding stage has completed;
 otherwise it will fail because that prompt's artifacts do not exist yet.
+
+## Plot the top two embedding directions
+
+Plot the top two principal directions from saved block-output embeddings. PCA is
+fit on the official 512-example wild split by default. BLEURT scores above `0.5`
+are shown in blue (correct); the remainder are red (hallucinated).
+
+```bash
+python plot_eigenvectors.py \
+  --prompt_name concise \
+  --layer 11 \
+  --split wild
+```
+
+For a prompt variant, use its matching name, for example:
+
+```bash
+python plot_eigenvectors.py \
+  --prompt_name short-factual \
+  --layer 11 \
+  --split all
+```
+
+The script saves a PNG and a CSV containing dataset index, the two coordinates,
+BLEURT score, and binary truth label under `save_for_eval/tqa_hal_det/plots/`.
